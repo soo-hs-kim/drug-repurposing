@@ -1,4 +1,4 @@
-##### Last update: Dec 7, 2024
+##### Last update: Jan 20, 2024
 
 ## DESCRIPTION
 This is a code repository for the second project "failure and drug repurposing"
@@ -9,6 +9,10 @@ This project examines when pharmaceutical firms adopt a rapid drug development s
 + data_cleaning.do
   + STATA do-file for cleaning the data
   + As this project is still under development, only a portion of the code can be shared.
+
++ technology topography.py
+  + python code for generating technology topography using text data
+  + Patent text was used
 
 ### Data used for this project
 + Cortellis (Proprietary data)
