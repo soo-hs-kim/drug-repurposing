@@ -1,0 +1,174 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import time
+import umap
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import wordnet, stopwords
+from nltk import pos_tag
+from langdetect import detect
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from collections import Counter, defaultdict
+
+# -----------------------------------------------------------
+# Define file paths and parameters for easy customization
+# -----------------------------------------------------------
+FILE_PATH = r'~\Patents_Text_Redeployed Launched Only.dta'
+OUTPUT_PATH_TOPOGRAPHY = r'~\redeployed launched.jpg'
+OUTPUT_PATH_CONTOUR = r'~\redeployed launched_contour_1980_2021.jpg'
+OUTPUT_PATH_CONTOUR_ROW = r'~\redeployed_launched_contour_single_row.jpg'
+
+NUM_CLUSTERS = 7  # Number of clusters for K-means
+NUM_TOP_WORDS = 7  # Number of top words for each cluster
+CUSTOM_TIME_RANGES = [(1980, 1990), (1990, 2000), (2000, 2010), (2010, 2021)]
+# -----------------------------------------------------------
+
+# Download necessary NLTK data
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+nltk.download('punkt')
+
+# Initialize lemmatizer and define stopwords
+lemmatizer = WordNetLemmatizer()
+english_stopwords = set(stopwords.words('english')).union({
+    'method', 'treat', 'comprise', 'use', 'composition', 'treatment', 'useful', 'invention', 'claim', 'preparation', 'disease',
+    'compound', 'see', 'eg', 'agent', 'cell', 'acid', 'relate', 'thereof', 'pharmaceutical', 'drug', 'also', 'present', 'provide',
+    'form', 'develop', 'filing', 'prepare', 'include', 'salt', 'one', 'disorder', 'derivative', 'contain', 'phase', 'receptor',
+    'first', 'patient', 'application', 'intermediate', 'disclose', 'new', 'therapeutic', 'active', 'appear', 'novel',
+    'product', 'inventor', 'therapy', 'medicine', 'subject', 'prior', 'wherein', 'release', 'administer', 'follow', 'human',
+    'assignee', 'target', 'reaction', 'patent', 'obtain', 'expire', 'material', 'may', 'base', 'synthesis', 'ii', 'pharmaceutically',
+    'accaptable', 'system', 'least', 'launch', 'high', 'reduce', 'prevent', 'produce', 'bind', 'part', 'effect', 'acceptable', 'peptide',
+    'sodium', 'associate', 'represent', 'condition', 'step', 'activity', 'specifically', 'u', 'administration', 'describe', 'say',
+    'b', 'group', 'publish', 'type', 'time', 'company', 'amount', 'prefereably', 'pain', 'solvent', 'license', 'effective', 'trial',
+    'technology', 'clinical', 'grant', 'syndrome', 'expression', 'improve', 'molecule', 'r', 'production', 'level', 'null', 'determine',
+    'particularly', 'development', 'stable', 'water', 'select', 'cover', 'prevention', 'interest', 'herein', 'factor', 'polypeptide',
+    'investigate', 'case', 'ingredient', 'multiple', 'component', 'university', 'dosage', 'two', 'area', 'field', 'potential', 'increase',
+    'report', 'low', 'single', 'addition', 'n', 'problem', 'chloride', 'derive', 'take', 'test', 'seem', 'us', 'x', 
+    'suspension', 'within', 'patenting', 'technical', 'website', 'ratio', 'subsidiary', 'therapeutically', 'certain', 'especially',
+    'degree', 'matrix', 'content', 'efficacy', 'hydrogen', 'ph', 'result', 'yield', 'vector', 'team', 'symptom', 'chain', 'different',
+    'respectively', 'free', 'core', 'via', 'failure', 'pathway', 'side', 'program', 'medium', 'concentration', 'show', 'function',
+    'due', 'example', 'series', 'consist', 'collaboration', 'acetate', 'small', 'mg', 'good', 'week', 'measure', 'assign', 'lead',
+    'preclinical', 'day', 'research', 'belong', 'february', 'iv', 'january', 'march', 'april', 'may', 'june', 'july', 'august',
+    'september', 'october', 'november', 'december', 'accord', 'body', 'book', 'direct', 'pharma', 'need', 'orange', 'comprising',
+    'modify', 'previous', 'well', 'involve', 'name', 'culture', 'predict', 'comprises', 'publication', 'spc', 'substitute',
+    'surface', 'fda', 'encode', 'react', 'kit', 'suitable', 'enhance', 'various', 'optionally', 'express', 'manufacture', 'presence',
+    'identify', 'improved', 'cause', 'domain', 'similar', 'capable', 'sequence', 'file', 'sample', 'make', 'raw',
+    'api', 'related', 'iii', 'complex', 'concurrently', 'following', 'far', 'extract', 'c', 'specific', 'substance', 'second',
+    'first', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'growth', 'however', 'response', 'amino', 'focus', 'analogue', 'portion',
+    'article', 'primary', 'stage', 'h', 'tract', 'e', 'solve', 'protect', 'compose', 'medicinal', 'ie', 'contact', 'merck', 'pfizer',
+    'pressure', 'mixed', 'checkpoint', 'activate', 'carry', 'solubility', 'data', 'block', 'general', 'unit', 'site', 'screen',
+    'agreement', 'kind', 'sustain', 'along', 'number', 'link', 'institute', 'work', 'mass', 'licensee', 'hold', 'promote', 'channel',
+    'compare', 'range', 'without', 'rate', 'previously', 'separate', 'car', 'know', 'action', 'set', 'signal', 'substituted',
+    'region', 'generate', 'market', 'variant', 'film', 'novartis', 'alone', 'property', 'characterize', 'coating', 'egfr', 'simple',
+    'study', 'individual', 'molecular', 'several', 'pure', 'eu', 'term', 'risk', 'reduction', 'three', 'year', 'moiety', 'embodiment',
+    'organic', 'medical', 'tissue', 'add', 'member', 'analog', 'weight', 'process', 'layer', 'combination', 'formula', 'conjugate', 
+    'device', 'infection', 'solution', 'slow', 'population', 'g', 'mean', 'act', 'auxiliary', 'version', 'early', 'systematic', 'natural', 
+    'host', 'advanced', 'regard', 'since', 'indication', 'model', 'indicate', 'technique', 'feature', 'isolate', 'animal', 
+    'mix', 'aspect', 'manufacturing', 'another', 'beta', 'end', 'functional', 'pick', 'continue', 'month', 'receive', 'excellent', 
+    'formerly', 'initiate', 'start', 'line', 'positive', 'load', 'candidate', 'key', 'concern', 'class', 'newport', 'sustained', 'storage', 
+    'ob', 'national', 'engineer', 'acquisition', 'discontinue', 'less', 'announce', 'applicant', 'alpha', 'sanofi', 'cancer', 'inhibitor', 
+    'formulation', 'antibody', 'tablet', 'oral', 'crystalline', 'hydrochloride', 'preferably', 'list', 'solid', 'delivery', 'tumor', 'protein'
+}) 
+
+# Function to map NLTK POS tags to WordNet POS tags
+def get_wordnet_pos(tag):
+    if tag.startswith('J'):
+        return wordnet.ADJ
+    elif tag.startswith('V'):
+        return wordnet.VERB
+    elif tag.startswith('N'):
+        return wordnet.NOUN
+    elif tag.startswith('R'):
+        return wordnet.ADV
+    else:
+        return wordnet.NOUN
+
+# Function to detect and keep only English text
+def keep_only_english(text):
+    try:
+        return text if detect(text) == 'en' else ''
+    except:
+        return ''
+
+# Function to preprocess text (tokenization, POS tagging, lemmatization, stopword removal)
+def preprocess_text(text):
+    tokens = word_tokenize(text.lower())
+    pos_tags = pos_tag(tokens)
+    lemmatized_tokens = [lemmatizer.lemmatize(token, get_wordnet_pos(tag)) for token, tag in pos_tags if token.isalpha()]
+    filtered_tokens = [word for word in lemmatized_tokens if word not in english_stopwords]
+    return filtered_tokens
+
+# Step 1: Load the data
+df = pd.read_stata(FILE_PATH)
+df['combined_text'] = df[['Title', 'Annotation', 'EnhancedTitle', 'Extract']].fillna('').apply(lambda row: ' '.join(row), axis=1)
+
+# Step 2: Remove non-English text and preprocess
+df['processed_text'] = df['combined_text'].apply(keep_only_english)
+df['tokens'] = df['processed_text'].apply(preprocess_text)
+
+# Step 3: Flatten tokens and count word frequencies
+all_tokens = [token for tokens in df['tokens'] for token in tokens]
+word_counts = Counter(all_tokens)
+
+# Step 4: Convert processed text to TF-IDF matrix
+df['processed_text_str'] = df['tokens'].apply(lambda x: ' '.join(x))
+vectorizer = TfidfVectorizer(max_features=5000)
+tfidf_matrix = vectorizer.fit_transform(df['processed_text_str'])
+
+# Step 5: Apply UMAP for dimensionality reduction
+umap_reducer = umap.UMAP(n_components=2, random_state=42)
+umap_embeddings = umap_reducer.fit_transform(tfidf_matrix)
+
+# Step 6: Apply K-means clustering
+kmeans = KMeans(n_clusters=NUM_CLUSTERS, random_state=42)
+clusters = kmeans.fit_predict(umap_embeddings)
+
+# Step 7: Extract representative words for each cluster
+cluster_tokens = defaultdict(list)
+for i, cluster_id in enumerate(clusters):
+    cluster_tokens[cluster_id].extend(df['tokens'].iloc[i])
+cluster_top_words = {cluster_id: ', '.join([word for word, _ in Counter(tokens).most_common(NUM_TOP_WORDS)]) for cluster_id, tokens in cluster_tokens.items()}
+
+# Step 8: Plot technology topography
+plt.figure(figsize=(12, 8))
+sns.scatterplot(x=umap_embeddings[:, 0], y=umap_embeddings[:, 1], hue=clusters, palette='tab10', s=50, alpha=0.8)
+handles, labels = plt.gca().get_legend_handles_labels()
+new_labels = [f"Cluster {label}: {cluster_top_words[int(label)]}" for label in labels]
+plt.legend(handles, new_labels, title="Cluster (Top Words)", loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=2)
+plt.title("Technology Topography: UMAP + K-means Clustering")
+plt.xlabel("UMAP Component 1")
+plt.ylabel("UMAP Component 2")
+plt.savefig(OUTPUT_PATH_TOPOGRAPHY, format='jpg', bbox_inches='tight', dpi=300)
+plt.show()
+
+# Step 9: Create contour plots for each time period
+def plot_contour_with_annotations(df, umap_embeddings, clusters, time_ranges, num_clusters=7):
+    fig, axes = plt.subplots(1, len(time_ranges), figsize=(24, 6), sharex=True, sharey=True)
+    cluster_colors = sns.color_palette("tab10", num_clusters)
+    cluster_labels = [f"Cluster {i}" for i in range(num_clusters)]
+
+    for i, (start_year, end_year) in enumerate(time_ranges):
+        df_period = df[(df['priority_year'] >= start_year) & (df['priority_year'] <= end_year)].copy()
+        umap_period = umap_embeddings[df_period.index]
+        clusters_period = clusters[df_period.index]
+        ax = axes[i]
+        for cluster_id in range(num_clusters):
+            cluster_mask = (clusters_period == cluster_id)
+            sns.kdeplot(x=umap_period[cluster_mask, 0], y=umap_period[cluster_mask, 1], ax=ax, levels=5, fill=True, alpha=0.6, color=cluster_colors[cluster_id])
+        ax.set_title(f"Time Period: {start_year}-{end_year}", fontsize=14)
+        ax.set_xlabel("UMAP Component 1", fontsize=12)
+        ax.set_ylabel("UMAP Component 2", fontsize=12)
+
+    fig.legend(handles, new_labels, title="Clusters", loc='lower center', bbox_to_anchor=(0.5, -0.1), ncol=num_clusters)
+    plt.suptitle("Dynamic Thematic Change by Custom Time Period", fontsize=18)
+    plt.savefig(OUTPUT_PATH_CONTOUR_ROW, format='jpg', bbox_inches='tight', dpi=300)
+    plt.show()
+
+# Generate contour plots
+plot_contour_with_annotations(df, umap_embeddings, clusters, CUSTOM_TIME_RANGES, num_clusters=NUM_CLUSTERS)
+
+print("Processing completed successfully.")
