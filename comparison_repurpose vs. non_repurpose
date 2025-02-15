@@ -1,0 +1,153 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import time
+from rdkit import Chem, DataStructs, RDLogger
+from rdkit.Chem import AllChem
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from scipy.stats import mannwhitneyu, kruskal, ttest_ind, f_oneway
+from matplotlib.lines import Line2D
+
+# Suppress RDKit-specific deprecation warnings
+RDLogger.DisableLog('rdApp.*')
+
+# ------------------------
+# Step 1: Load and Preprocess Data
+# ------------------------
+start_time = time.time()
+
+# 📌 Load the dataset
+file_path = ~\\compare_repurpose_NON_repurpose.dta"
+df = pd.read_stata(file_path)
+
+# 📌 Drop rows where the SMILES column is missing (since we need molecular structure)
+df = df.dropna(subset=['SMILES']).reset_index(drop=True)
+
+print(f"Step 1 (Data Loading & Cleaning) completed in {time.time() - start_time:.2f} seconds")
+
+# ------------------------
+# Step 2: Convert SMILES to Morgan Fingerprints
+# ------------------------
+start_time = time.time()
+
+# 📌 Function to convert SMILES strings to Morgan fingerprints
+def smiles_to_fingerprint(smiles, radius=2, n_bits=2048):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol:
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)  # Keep as ExplicitBitVect
+    else:
+        return None
+
+# 📌 Apply fingerprint conversion to all molecules
+df["fingerprint"] = df["SMILES"].apply(smiles_to_fingerprint)
+
+# 📌 Drop molecules that couldn't be converted
+df = df[df["fingerprint"].notna()].reset_index(drop=True)
+
+# 📌 Keep fingerprints as a list of RDKit ExplicitBitVect objects
+fingerprints = df["fingerprint"].tolist()
+
+print(f"Step 2 (Fingerprint Conversion) completed in {time.time() - start_time:.2f} seconds")
+
+# ------------------------
+# Step 3: Dimensionality Reduction (PCA + t-SNE)
+# ------------------------
+start_time = time.time()
+
+# 📌 Apply PCA for initial dimensionality reduction (convert ExplicitBitVect to list)
+pca = PCA(n_components=50)
+fingerprints_pca = pca.fit_transform([list(fp) for fp in fingerprints])
+
+# 📌 Apply t-SNE for final 2D visualization
+tsne = TSNE(n_components=2, perplexity=50, random_state=42)
+fingerprints_tsne = tsne.fit_transform(fingerprints_pca)
+
+# 📌 Add results to DataFrame for visualization
+df["TSNE_1"] = fingerprints_tsne[:, 0]
+df["TSNE_2"] = fingerprints_tsne[:, 1]
+
+print(f"Step 3 (Dimensionality Reduction) completed in {time.time() - start_time:.2f} seconds")
+
+# ------------------------
+# Step 4: Visualization (Unchanged from Your Code)
+# ------------------------
+
+# 📌 Convert redeploy_at_least_once to integer to avoid float issues
+df['redeploy_at_least_once'] = df['redeploy_at_least_once'].astype(int)
+
+# 📌 Define explicit color palette
+palette = {0: "#1f77b4", 1: "#d62728"}  # Blue for Never Repurposed, Red for Repurposed
+
+# 📌 Plot molecular structure similarity using t-SNE
+plt.figure(figsize=(10, 6))
+sns.scatterplot(data=df, x="TSNE_1", y="TSNE_2", hue="redeploy_at_least_once",
+                palette=palette, alpha=0.6, s=50, legend=False)
+
+# 📌 Create custom legend with circular markers
+legend_elements = [
+    Line2D([0], [0], marker='o', color='w', label='Never Repurposed',
+           markerfacecolor='#1f77b4', markersize=8),
+    Line2D([0], [0], marker='o', color='w', label='Repurposed At Least Once',
+           markerfacecolor='#d62728', markersize=8)
+]
+
+plt.legend(handles=legend_elements, title="Repurposed")
+
+# 📌 Add titles and labels
+plt.title("Molecular Structure Comparison of Repurposed vs. Non-Repurposed Drugs (t-SNE Projection)")
+plt.xlabel("t-SNE Component 1")
+plt.ylabel("t-SNE Component 2")
+
+# 📌 Ensure the plot is displayed before statistical tests
+plt.show()
+
+# ------------------------
+# Step 5: Statistical Tests & Effect Size Measures
+# ------------------------
+start_time = time.time()
+print("\nStep 5: Performing Statistical Tests and Effect Size Calculations")
+
+# 📌 Separate repurposed and non-repurposed fingerprints
+repurposed = df[df["redeploy_at_least_once"] == 1]["fingerprint"].tolist()
+non_repurposed = df[df["redeploy_at_least_once"] == 0]["fingerprint"].tolist()
+
+# 📌 Function to compute Tanimoto similarity between drug groups
+def compute_tanimoto_similarity(group1, group2):
+    similarity_scores = []
+    for fp1 in group1:
+        for fp2 in group2:
+            if isinstance(fp1, DataStructs.ExplicitBitVect) and isinstance(fp2, DataStructs.ExplicitBitVect):
+                similarity_scores.append(DataStructs.TanimotoSimilarity(fp1, fp2))  # ✅ Ensure correct object type
+    return similarity_scores
+
+# 📌 Compute similarity scores
+similarity_non_repurposed = compute_tanimoto_similarity(non_repurposed, non_repurposed)
+similarity_between_groups = compute_tanimoto_similarity(non_repurposed, repurposed)
+
+# 📌 Perform statistical tests
+u_stat, p_value_mw = mannwhitneyu(similarity_non_repurposed, similarity_between_groups, alternative='two-sided')
+h_stat, p_value_kruskal = kruskal(similarity_non_repurposed, similarity_between_groups)
+t_stat, p_value_ttest = ttest_ind(similarity_non_repurposed, similarity_between_groups, equal_var=False)
+f_stat, p_value_anova = f_oneway(similarity_non_repurposed, similarity_between_groups)
+
+# 📌 Compute Effect Size Measures
+def cliffs_delta(x, y):
+    U, _ = mannwhitneyu(x, y, alternative="two-sided")
+    nx, ny = len(x), len(y)
+    delta = (2 * U) / (nx * ny) - 1  # ✅ Correctly scaled between -1 and 1
+    return delta
+
+cliffs_delta_value = cliffs_delta(similarity_non_repurposed, similarity_between_groups)
+
+epsilon_squared = (h_stat - len(similarity_non_repurposed) + 1) / (len(similarity_non_repurposed) - 1)
+
+# 📌 Print results
+print(f"Step 5 completed in {time.time() - start_time:.2f} seconds")
+print(f"Mann-Whitney U Test: p = {p_value_mw:.4f}")
+print(f"Kruskal-Wallis Test: p = {p_value_kruskal:.4f}")
+print(f"Welch’s t-test: p = {p_value_ttest:.4f}")
+print(f"ANOVA: p = {p_value_anova:.4f}")
+print(f"Cliff's Delta: {cliffs_delta_value:.4f}")
+print(f"Epsilon-squared: {epsilon_squared:.4f}")
